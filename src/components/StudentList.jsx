@@ -1,4 +1,4 @@
-import StudentCard from "../components/studentCard";
+import StudentCard from "../components/StudentCard";
 
 export default function StudentList({
   students,
