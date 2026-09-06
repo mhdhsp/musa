@@ -11,7 +11,7 @@ import { getTodayDate, formatDisplayDate } from "../utils/date";
 
 import { useAttendance } from "../hooks/useAttendance";
 
-import StudentList from "../components/studentList";
+import StudentList from "../components/StudentList";
 import AttendanceSummary from "../components/AttendanceSummary";
 
 export default function Attendance() {
