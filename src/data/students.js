@@ -1,43 +1,9 @@
 export const SECTION_TYPES = {
   HIFZ: "HIFZ",
-  DARS: "DARS",
+  DARS: "DARS"
 };
 
-export const students = [
-  {
-    id: 1,
-    name: "Abdul Rahman",
-    section: SECTION_TYPES.HIFZ,
-    active: true,
-  },
-  {
-    id: 2,
-    name: "Ahmed",
-    section: SECTION_TYPES.HIFZ,
-    active: true,
-  },
-  {
-    id: 3,
-    name: "Basheer",
-    section: SECTION_TYPES.HIFZ,
-    active: true,
-  },
-  {
-    id: 4,
-    name: "Faisal",
-    section: SECTION_TYPES.DARS,
-    active: true,
-  },
-  {
-    id: 5,
-    name: "Hamza",
-    section: SECTION_TYPES.DARS,
-    active: true,
-  },
-  {
-    id: 6,
-    name: "Ibrahim",
-    section: SECTION_TYPES.DARS,
-    active: true,
-  },
-];
+// Clean slate: 0 hardcoded students
+export const INITIAL_STUDENTS = [];
+
+export const students = INITIAL_STUDENTS;
