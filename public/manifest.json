@@ -1,0 +1,20 @@
+{
+  "name": "Al-College Portal",
+  "short_name": "Al-College",
+  "description": "Zero-backend Hifz & Dars management system for Islamic schools",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#065f46",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["education", "productivity"],
+  "lang": "en"
+}

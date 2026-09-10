@@ -1,10 +1,15 @@
-// IndexedDB service for zero-backend persistent storage with high capacity
+// IndexedDB service — connection cached at module level for performance
 
 const DB_NAME = "CollegeManagementDB";
-const DB_VERSION = 2; // Incremented version to purge legacy cached data
+const DB_VERSION = 2;
+
+// Module-level cached promise so we only ever open the DB once
+let _dbPromise = null;
 
 function openDB() {
-  return new Promise((resolve, reject) => {
+  if (_dbPromise) return _dbPromise;
+
+  _dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = (event) => {
@@ -33,11 +38,17 @@ function openDB() {
     };
 
     request.onsuccess = (event) => resolve(event.target.result);
-    request.onerror = (event) => reject(event.target.error);
+    request.onerror = (event) => {
+      _dbPromise = null; // allow retry on error
+      reject(event.target.error);
+    };
   });
+
+  return _dbPromise;
 }
 
-// Student operations
+// ─── Student operations ──────────────────────────────────────────────────────
+
 export async function getAllStudents() {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -47,11 +58,13 @@ export async function getAllStudents() {
 
     request.onsuccess = () => {
       const results = request.result || [];
-      // Filter out legacy hardcoded sample student IDs (STU-101 to STU-204)
-      const legacyIds = ["STU-101", "STU-102", "STU-103", "STU-104", "STU-201", "STU-202", "STU-203", "STU-204"];
+      // Purge legacy hardcoded sample IDs from old versions
+      const legacyIds = [
+        "STU-101", "STU-102", "STU-103", "STU-104",
+        "STU-201", "STU-202", "STU-203", "STU-204",
+      ];
       const cleanStudents = results.filter((s) => !legacyIds.includes(s.id));
-      
-      // If legacy students exist in IDB, purge them asynchronously
+
       if (results.length !== cleanStudents.length) {
         purgeLegacyStudents(legacyIds);
       }
@@ -67,9 +80,7 @@ async function purgeLegacyStudents(legacyIds) {
     const db = await openDB();
     const tx = db.transaction("students", "readwrite");
     const store = tx.objectStore("students");
-    for (const id of legacyIds) {
-      store.delete(id);
-    }
+    for (const id of legacyIds) store.delete(id);
   } catch (e) {
     console.warn("Purge legacy students warning:", e);
   }
@@ -106,7 +117,8 @@ export async function clearAllData() {
   return true;
 }
 
-// Attendance operations
+// ─── Attendance operations ───────────────────────────────────────────────────
+
 export async function getAttendanceLogs() {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -129,22 +141,25 @@ export async function saveAttendanceLog(record) {
   });
 }
 
-// Hifz Logs operations
+// ─── Hifz Log operations ─────────────────────────────────────────────────────
+
 export async function getHifzLogs(studentId = null) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("hifzLogs", "readonly");
     const store = tx.objectStore("hifzLogs");
-    const request = store.getAll();
-    request.onsuccess = () => {
-      const logs = request.result || [];
-      if (studentId) {
-        resolve(logs.filter((l) => l.studentId === studentId));
-      } else {
-        resolve(logs);
-      }
-    };
-    request.onerror = () => reject(request.error);
+
+    if (studentId) {
+      // Use the studentId index instead of full scan + in-memory filter
+      const index = store.index("studentId");
+      const request = index.getAll(studentId);
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    } else {
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    }
   });
 }
 
@@ -159,7 +174,19 @@ export async function saveHifzLog(hifzLog) {
   });
 }
 
-// Settings & Sync operations
+export async function deleteHifzLog(logId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("hifzLogs", "readwrite");
+    const store = tx.objectStore("hifzLogs");
+    const request = store.delete(logId);
+    request.onsuccess = () => resolve(true);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+
 export async function getSettings() {
   const db = await openDB();
   return new Promise((resolve) => {
@@ -176,7 +203,8 @@ export async function getSettings() {
       }
       resolve(result);
     };
-    request.onerror = () => resolve({ googleSheetUrl: localStorage.getItem("googleSheetUrl") || "" });
+    request.onerror = () =>
+      resolve({ googleSheetUrl: localStorage.getItem("googleSheetUrl") || "" });
   });
 }
 
@@ -192,49 +220,78 @@ export async function saveSetting(key, value) {
   });
 }
 
+// ─── ID generators ───────────────────────────────────────────────────────────
+
+/**
+ * Generates a collision-resistant student ID using timestamp + 4-char random hex.
+ * e.g. "STU-1718200000000-a3f2"
+ */
+export function generateStudentId() {
+  const rand = Math.floor(Math.random() * 0xffff)
+    .toString(16)
+    .padStart(4, "0");
+  return `STU-${Date.now()}-${rand}`;
+}
+
+/**
+ * Attendance record ID — unique per date + section + timestamp so that
+ * ALL and HIFZ sessions on the same day never collide.
+ * The canonical record for a date+scope is looked up by date+scope, not by id.
+ */
+export function generateAttendanceId(date, section) {
+  return `${date}-${section}-${Date.now()}`;
+}
+
+// ─── Backup / Restore ────────────────────────────────────────────────────────
+
 export async function exportFullBackup() {
-  const students = await getAllStudents();
-  const attendance = await getAttendanceLogs();
-  const hifzLogs = await getHifzLogs();
-  const settings = await getSettings();
+  const [students, attendance, hifzLogs, settings] = await Promise.all([
+    getAllStudents(),
+    getAttendanceLogs(),
+    getHifzLogs(),
+    getSettings(),
+  ]);
 
   return {
     exportDate: new Date().toISOString(),
-    version: 1,
+    version: 2,
     students,
     attendance,
     hifzLogs,
-    settings
+    settings,
   };
 }
 
+/**
+ * Atomic import: all three stores are written in a single transaction so that
+ * a mid-import failure doesn't leave the DB in a partial state.
+ */
 export async function importFullBackup(data) {
-  if (!data || !data.students) {
+  if (!data || !Array.isArray(data.students)) {
     throw new Error("Invalid backup data format.");
   }
+
   const db = await openDB();
 
-  const stTx = db.transaction("students", "readwrite");
-  const stStore = stTx.objectStore("students");
-  for (const s of data.students) {
-    stStore.put(s);
-  }
+  return new Promise((resolve, reject) => {
+    const storeNames = ["students", "attendance", "hifzLogs"];
+    const tx = db.transaction(storeNames, "readwrite");
 
-  if (Array.isArray(data.attendance)) {
-    const attTx = db.transaction("attendance", "readwrite");
-    const attStore = attTx.objectStore("attendance");
-    for (const a of data.attendance) {
-      attStore.put(a);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(new Error("Import transaction aborted."));
+    tx.oncomplete = () => resolve(true);
+
+    const studentStore = tx.objectStore("students");
+    for (const s of data.students) studentStore.put(s);
+
+    if (Array.isArray(data.attendance)) {
+      const attStore = tx.objectStore("attendance");
+      for (const a of data.attendance) attStore.put(a);
     }
-  }
 
-  if (Array.isArray(data.hifzLogs)) {
-    const hfTx = db.transaction("hifzLogs", "readwrite");
-    const hfStore = hfTx.objectStore("hifzLogs");
-    for (const h of data.hifzLogs) {
-      hfStore.put(h);
+    if (Array.isArray(data.hifzLogs)) {
+      const hfStore = tx.objectStore("hifzLogs");
+      for (const h of data.hifzLogs) hfStore.put(h);
     }
-  }
-
-  return true;
+  });
 }
